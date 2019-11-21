@@ -34,6 +34,7 @@ fn move_semantics() {
 
     p1 = Parent(2, Child(21), Child(22)); // p1を別の値に束縛する
     println!("p1: {:?}", p1); // p1は別の値の所有権を持つためアクセスできる
+
 }
 
 // Parentへの不変の参照を引数にとる

@@ -13,6 +13,6 @@ pub mod third;
 pub mod fourth;
 
 pub enum SortOrder {
-    Ascending,   // 昇順
-    Descending,  // 降順
+    Ascending,  // 昇順
+    Descending, // 降順
 }
