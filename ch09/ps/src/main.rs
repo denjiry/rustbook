@@ -1,3 +1,4 @@
+use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Loc(usize, usize);
 
@@ -413,6 +414,33 @@ where
     Ok(e)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Error {
+    Lexer(LexError),
+    Parser(ParseError),
+}
+
+impl From<LexError> for Error {
+    fn from(e: LexError) -> Self {
+        Error::Lexer(e)
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(e: ParseError) -> Self {
+        Error::Parser(e)
+    }
+}
+
+impl FromStr for Ast {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let tokens = lex(s)?;
+        let ast = parse(tokens)?;
+        Ok(ast)
+    }
+}
+
 #[test]
 fn test_parser() {
     // 1 + 2 * 3 - -10
@@ -451,8 +479,268 @@ fn test_parser() {
     )
 }
 
+use std::fmt;
+impl fmt::Display for TokenKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::TokenKind::*;
+        match self {
+            Number(n) => n.fmt(f),
+            Plus => write!(f, "+"),
+            Minus => write!(f, "-"),
+            Asterisk => write!(f, "*"),
+            Slash => write!(f, "/"),
+            LParen => write!(f, "("),
+            RParen => write!(f, ")"),
+        }
+    }
+}
+
+impl fmt::Display for Loc {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}-{}", self.0, self.1)
+    }
+}
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::LexErrorKind::*;
+        let loc = &self.loc;
+        match self.value {
+            InvalidChar(c) => write!(f, "{}: invalid char '{}'", loc, c),
+            Eof => write!(f, "End of file"),
+        }
+    }
+}
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::ParseError::*;
+        match self {
+            UnexpectedToken(tok) => write!(f, "{}: {} is not expected", tok.loc, tok.value),
+            NotExpression(tok) => write!(
+                f,
+                "{}: '{}' is not a start of expression",
+                tok.loc, tok.value
+            ),
+            NotOperator(tok) => write!(f, "{}: '{}' is not an operator", tok.loc, tok.value),
+            UnclosedOpenParen(tok) => write!(f, "{}: '{}' is not closed", tok.loc, tok.value),
+            RedundantExpression(tok) => write!(
+                f,
+                "{}: expression after '{}' is redundant",
+                tok.loc, tok.value
+            ),
+            Eof => write!(f, "End of file"),
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "parser error")
+    }
+}
+
+use std::error::Error as StdError;
+
+impl StdError for LexError {}
+impl StdError for ParseError {}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        use self::Error::*;
+        match self {
+            Lexer(lex) => Some(lex),
+            Parser(parse) => Some(parse),
+        }
+    }
+}
+
+fn print_annot(input: &str, loc: Loc) {
+    // 入力に対して
+    eprintln!("{}", input);
+    // 位置情報をわかりやすく示す
+    eprintln!("{}{}", " ".repeat(loc.0), "^".repeat(loc.1 - loc.0));
+}
+
+impl Error {
+    fn show_diagnostic(&self, input: &str) {
+        use self::Error::*;
+        use self::ParseError as P;
+        // エラー情報とその位置情報を取り出す。エラーの種類によって位置情報を調整する。
+        let (e, loc): (&StdError, Loc) = match self {
+            Lexer(e) => (e, e.loc.clone()),
+            Parser(e) => {
+                let loc = match e {
+                    P::UnexpectedToken(Token { loc, .. })
+                    | P::NotExpression(Token { loc, .. })
+                    | P::NotOperator(Token { loc, .. })
+                    | P::UnclosedOpenParen(Token { loc, .. }) => loc.clone(),
+                    // redundant expressionはトークン以降行末までが余りなのでlocの終了位置を調整する
+                    P::RedundantExpression(Token { loc, .. }) => Loc(loc.0, input.len()),
+                    // EoFはloc情報を持っていないのでその場で作る
+                    P::Eof => Loc(input.len(), input.len() + 1),
+                };
+                (e, loc)
+            }
+        };
+        // エラー情報を簡単に表示し
+        eprintln!("{}", e);
+        // エラー位置を指示する
+        print_annot(input, loc);
+    }
+}
+
+fn show_trace<E: StdError>(e: E) {
+    // エラーがあった場合そのエラーとcauseを全部出力する
+    eprintln!("{}", e);
+    let mut source = e.source();
+    // cause を全て辿って表示する
+    while let Some(e) = source {
+        eprintln!("caused by {}", e);
+        source = e.source()
+    }
+    // エラー表示のあとは次の入力を受け付ける
+}
+
+struct Interpreter;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum InterpreterErrorKind {
+    DivisionByZero,
+}
+
+type InterpreterError = Annot<InterpreterErrorKind>;
+impl InterpreterError {
+    fn show_diagnostic(&self, input: &str) {
+        // エラー情報を簡単に表示し
+        eprintln!("{}", self);
+        // エラー位置を指示する
+        print_annot(input, self.loc.clone());
+    }
+}
+impl fmt::Display for InterpreterError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::InterpreterErrorKind::*;
+        match self.value {
+            DivisionByZero => write!(f, "division by zero"),
+        }
+    }
+}
+
+impl StdError for InterpreterError {
+    fn description(&self) -> &str {
+        use self::InterpreterErrorKind::*;
+        match self.value {
+            DivisionByZero => "the right hand expression of the division evaluates to zero",
+        }
+    }
+}
+
+impl Interpreter {
+    pub fn new() -> Self {
+        Interpreter
+    }
+    pub fn eval(&mut self, expr: &Ast) -> Result<i64, InterpreterError> {
+        use self::AstKind::*;
+        match expr.value {
+            Num(n) => Ok(n as i64),
+            UniOp { ref op, ref e } => {
+                let e = self.eval(e)?;
+                Ok(self.eval_uniop(op, e))
+            }
+            BinOp {
+                ref op,
+                ref l,
+                ref r,
+            } => {
+                let l = self.eval(l)?;
+                let r = self.eval(r)?;
+                self.eval_binop(op, l, r)
+                    .map_err(|e| InterpreterError::new(e, expr.loc.clone()))
+            }
+        }
+    }
+    fn eval_uniop(&mut self, op: &UniOp, n: i64) -> i64 {
+        use self::UniOpKind::*;
+        match op.value {
+            Plus => n,
+            Minus => -n,
+        }
+    }
+    fn eval_binop(&mut self, op: &BinOp, l: i64, r: i64) -> Result<i64, InterpreterErrorKind> {
+        use self::BinOpKind::*;
+        match op.value {
+            Add => Ok(l + r),
+            Sub => Ok(l - r),
+            Mult => Ok(l * r),
+            Div => {
+                if r == 0 {
+                    Err(InterpreterErrorKind::DivisionByZero)
+                } else {
+                    Ok(l / r)
+                }
+            }
+        }
+    }
+}
+
+struct RpnCompiler;
+
+impl RpnCompiler {
+    pub fn new() -> Self {
+        RpnCompiler
+    }
+
+    pub fn compile(&mut self, expr: &Ast) -> String {
+        let mut buf = String::new();
+        self.compile_inner(expr, &mut buf);
+        buf
+    }
+
+    pub fn compile_inner(&mut self, expr: &Ast, buf: &mut String) {
+        use self::AstKind::*;
+        match expr.value {
+            Num(n) => buf.push_str(&n.to_string()),
+            UniOp { ref op, ref e } => {
+                self.compile_uniop(op, buf);
+                self.compile_inner(e, buf)
+            }
+            BinOp {
+                ref op,
+                ref l,
+                ref r,
+            } => {
+                self.compile_inner(l, buf);
+                buf.push_str(" ");
+                self.compile_inner(r, buf);
+                buf.push_str(" ");
+                self.compile_binop(op, buf)
+            }
+        }
+    }
+
+    fn compile_uniop(&mut self, op: &UniOp, buf: &mut String) {
+        use self::UniOpKind::*;
+        match op.value {
+            Plus => buf.push_str("+"),
+            Minus => buf.push_str("-"),
+        }
+    }
+    fn compile_binop(&mut self, op: &BinOp, buf: &mut String) {
+        use self::BinOpKind::*;
+        match op.value {
+            Add => buf.push_str("+"),
+            Sub => buf.push_str("-"),
+            Mult => buf.push_str("*"),
+            Div => buf.push_str("/"),
+        }
+    }
+}
+
 fn main() {
     use std::io::{stdin, BufRead, BufReader};
+
+    // let mut interp = Interpreter::new();
+    let mut compiler = RpnCompiler::new();
     let stdin = stdin();
     let stdin = stdin.lock();
     let stdin = BufReader::new(stdin);
@@ -461,9 +749,25 @@ fn main() {
     loop {
         prompt(">").unwrap();
         if let Some(Ok(line)) = lines.next() {
-            let tokens = lex(&line).unwrap();
-            let ast = parse(tokens).unwrap();
-            println!("{:?}", ast);
+            let ast = match line.parse::<Ast>() {
+                Ok(ast) => ast,
+                Err(e) => {
+                    e.show_diagnostic(&line);
+                    show_trace(e);
+                    continue;
+                }
+            };
+            // let n = match interp.eval(&ast) {
+            //     Ok(n) => n,
+            //     Err(e) => {
+            //         e.show_diagnostic(&line);
+            //         show_trace(e);
+            //         continue;
+            //     }
+            // };
+            // println!("{}", n);
+            let rpn = compiler.compile(&ast);
+            println!("{}", rpn);
         } else {
             break;
         }
