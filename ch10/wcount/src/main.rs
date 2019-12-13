@@ -13,6 +13,6 @@ fn main() {
 
     // 3. ファイルから1行ずつ読み込む
     // 第2引数 `Default::default` を加える
-    let freqs = count(reader);
+    let freqs = count(reader, Default::default());
     println!("{:?}", freqs);
 }
