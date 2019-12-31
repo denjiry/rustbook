@@ -1,4 +1,3 @@
-# export DATABASE_URL='postgresql://postgres:password@localhost:5432/l
 postgres-data:
   image: busybox
   volumes:
