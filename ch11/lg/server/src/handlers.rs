@@ -2,6 +2,7 @@ use actix_web::{HttpResponse, Json, Query, State};
 use failure::Error;
 use log::debug;
 
+use crate::db;
 use crate::Server;
 
 pub fn handle_post_csv(server: State<Server>) -> Result<HttpResponse, Error> {
@@ -14,7 +15,19 @@ pub fn handle_post_logs(
     server: State<Server>,
     log: Json<api::logs::post::Request>,
 ) -> Result<HttpResponse, Error> {
-    debug!("{:?}", log);
+    use crate::model::NewLog;
+    use chrono::Utc;
+
+    let log = NewLog {
+        user_agent: log.user_agent.clone(),
+        response_time: log.response_time,
+        timestamp: log.timestamp.unwrap_or_else(|| Utc::now()).naive_utc(),
+    };
+    let conn = server.pool.get()?;
+    db::insert_log(&conn, &log)?;
+
+    debug!("received log: {:?}", log);
+
     Ok(HttpResponse::Accepted().finish())
 }
 
