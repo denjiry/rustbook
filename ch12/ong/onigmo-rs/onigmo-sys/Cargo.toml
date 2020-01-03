@@ -1,0 +1,12 @@
+[package]
+name = "onigmo-sys"
+version = "0.1.0"
+authors = ["kento tajiri <k.denjiry@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.44"
